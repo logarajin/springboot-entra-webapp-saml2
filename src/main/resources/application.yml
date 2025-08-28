@@ -1,0 +1,15 @@
+spring:
+  security:
+    saml2:
+      relyingparty:
+        registration:
+          azure:
+            identityprovider:
+              metadata-uri: 
+            assertingparty:
+              entity-id: springboot-app
+              
+logging:
+  level:
+    org.springframework.security: DEBUG              
+#https://login.microsoftonline.com/4b5567ea-ae61-4536-825e-d93d069b8438/federationmetadata/2007-06/federationmetadata.xml?appid=bc647539-412a-4bfa-93f0-900ebe91b488
