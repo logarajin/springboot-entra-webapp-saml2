@@ -1,69 +1,73 @@
 package com.example.demo.config;
 
+import org.opensaml.saml.saml2.core.Assertion;
+import org.opensaml.saml.saml2.core.Response;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
-import org.springframework.security.saml2.provider.service.authentication.*;
-import org.springframework.security.saml2.provider.service.registration.*;
+import org.springframework.security.saml2.provider.service.authentication.OpenSamlAuthenticationProvider;
+import org.springframework.security.saml2.provider.service.authentication.Saml2Authentication;
+import org.springframework.security.saml2.provider.service.authentication.Saml2AuthenticationException;
+import org.springframework.security.saml2.provider.service.authentication.Saml2Error;
+import org.springframework.security.saml2.provider.service.authentication.Saml2ErrorCodes;
+import org.springframework.security.saml2.provider.service.authentication.Saml2AuthenticationToken;
+import org.springframework.security.saml2.provider.service.registration.RelyingPartyRegistrations;
+import org.springframework.security.saml2.provider.service.registration.RelyingPartyRegistration;
+import org.springframework.security.saml2.provider.service.registration.RelyingPartyRegistrationRepository;
 import org.springframework.security.web.SecurityFilterChain;
 
 @Configuration
 public class SecurityConfig {
 
-    // 1. Load MS Entra ID metadata (contains signing certs)
     @Bean
     public RelyingPartyRegistrationRepository relyingPartyRegistrationRepository() {
-        String metadataUrl = "https://login.microsoftonline.com/{tenant-id}/federationmetadata/2007-06/federationmetadata.xml?appid={client-id}";
+        String metadataUrl =
+            "https://login.microsoftonline.com/{tenant-id}/federationmetadata/2007-06/federationmetadata.xml?appid={client-id}";
 
-        RelyingPartyRegistration registration =
-                RelyingPartyRegistrations
-                        .fromMetadataLocation(metadataUrl)
-                        .registrationId("azure")
-                        .build();
+        RelyingPartyRegistration registration = RelyingPartyRegistrations
+                .fromMetadataLocation(metadataUrl)
+                .registrationId("azure")
+                .build();
 
         return new InMemoryRelyingPartyRegistrationRepository(registration);
     }
 
-    // 2. Customize authentication provider to enforce Assertion signed
     @Bean
-    public Saml2AuthenticationProvider saml2AuthenticationProvider(
-            RelyingPartyRegistrationRepository registrations) {
+    public OpenSamlAuthenticationProvider openSamlAuthenticationProvider() {
+        OpenSamlAuthenticationProvider provider = new OpenSamlAuthenticationProvider();
 
-        Saml2AuthenticationProvider provider = new Saml2AuthenticationProvider(registrations);
-
-        provider.setResponseAuthenticationConverter((responseToken) -> {
+        // 👇 Customize validation
+        provider.setResponseAuthenticationConverter((Saml2AuthenticationToken token) -> {
             Saml2Authentication authentication =
-                    Saml2AuthenticationConverter.withDefaults().convert(responseToken);
+                    OpenSamlAuthenticationProvider.createDefaultResponseAuthenticationConverter()
+                            .convert(token);
+
+            Response response = (Response) token.getResponse();
 
             // ✅ Require Assertion signed
-            boolean allAssertionsSigned = responseToken.getResponse().getAssertions()
-                    .stream()
-                    .allMatch(assertion -> assertion.getSignature() != null);
+            boolean assertionSigned = response.getAssertions().stream()
+                    .allMatch(Assertion::isSigned);
 
-            if (!allAssertionsSigned) {
+            if (!assertionSigned) {
                 throw new Saml2AuthenticationException(
                         new Saml2Error(Saml2ErrorCodes.INVALID_SIGNATURE,
-                                "Assertion must be signed")
-                );
+                                "Assertion must be signed"));
             }
 
-            // ❌ Do not require Response to be signed
+            // ❌ Don’t require Response signed (skip check)
             return authentication;
         });
 
         return provider;
     }
 
-    // 3. Standard Spring Security filter chain with SAML2 login
     @Bean
     public SecurityFilterChain securityFilterChain(
             HttpSecurity http,
-            Saml2AuthenticationProvider samlProvider) throws Exception {
+            OpenSamlAuthenticationProvider samlProvider) throws Exception {
 
         http
-            .authorizeHttpRequests(auth -> auth
-                .anyRequest().authenticated()
-            )
+            .authorizeHttpRequests(auth -> auth.anyRequest().authenticated())
             .saml2Login(withDefaults -> {})
             .authenticationProvider(samlProvider);
 
